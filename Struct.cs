@@ -9,9 +9,9 @@ namespace AdminHooks
 {
     public struct AdminHook
     {
-        public string Flag;
-        public int Value;
-        public bool OnlyEndRound;
+        public string Flag { get; set; }
+        public int Value { get; set; }
+        public bool OnlyEndRound { get; set; }
         public AdminHook()
         {
             Flag = "";

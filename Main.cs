@@ -9,7 +9,7 @@ using System.Text.Json.Serialization;
 namespace AdminHooks;
 public class PluginConfig : BasePluginConfig
 {
-    [JsonPropertyName("Values")] public List<AdminHook> Limits { get; set; } = new List<AdminHook>([new AdminHook("@css/root", -1), new AdminHook("@css/generic", 3)]);
+    [JsonPropertyName("Values")] public List<AdminHook> Limits { get; set; } = new List<AdminHook>([new AdminHook("@css/root", -1), new AdminHook("@css/generic", 3, true)]);
 }
 
 public class AskConnectIp : BasePlugin, IPluginConfig<PluginConfig>
