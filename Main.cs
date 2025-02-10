@@ -3,113 +3,154 @@ using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Core.Capabilities;
 using CounterStrikeSharp.API.Modules.Admin;
-using Hooks;
+using HGR;
 using System.Text.Json.Serialization;
 
-namespace AdminHooks;
+namespace AdminHGR;
+
 public class PluginConfig : BasePluginConfig
 {
-    [JsonPropertyName("Values")] public List<AdminHook> Limits { get; set; } = new List<AdminHook>([new AdminHook("@css/root", -1), new AdminHook("@css/generic", 3, true)]);
+    [JsonPropertyName("Values")] public List<AdminLimit> Limits { get; set; } = new List<AdminLimit>([new AdminLimit("@css/root", -1, -1, -1), new AdminLimit("@css/generic", 3, 0, 0, true)]);
 }
 
-public class AskConnectIp : BasePlugin, IPluginConfig<PluginConfig>
+public class AdminHGR: BasePlugin, IPluginConfig<PluginConfig>
 {
     public PluginConfig Config { get; set; }
-    public override string ModuleName => "[Admin] Hooks";
-    public override string ModuleVersion => "1.0";
+    public override string ModuleName => "[Admin] HGR";
+    public override string ModuleVersion => "2.0";
     public override string ModuleAuthor => "Nick Fox";
 
-    private IHooksApi? _hooks;
-    private PluginCapability<IHooksApi> PluginHooks { get; } = new("hooks:nfcore");
-
-    public override void OnAllPluginsLoaded(bool hotReload)
-    {
-        _hooks = PluginHooks.Get();
-
-        _hooks.AddHook((playerinfo) => {
-
-            var slot = playerinfo.Player().Slot;
-            if (hooksCount[slot] > 0)
-            {
-                hooksCount[slot]--;
-                if (hooksCount[slot] == 0)
-                    playerinfo.Player().PrintToChat(Localizer["expired"]);
-                else
-                    playerinfo.Player().PrintToChat(String.Format(Localizer["use_count"], hooksCount[slot]));
-                playerinfo.Set(HookState.Enabled);
-
-            }
-            else
-                if (hooksCount[slot] == -1)
-                playerinfo.Set(HookState.Enabled);
-
-        });
-    }
-
+    private IHGRApi? _hgr;
+    private PluginCapability<IHGRApi> PluginHooks { get; } = new("hgr:nfcore");
     public void OnConfigParsed(PluginConfig config)
     {
         Config = config;
     }
-    private int[] hooksCount = new int[65];
+
+
+    public override void OnAllPluginsLoaded(bool hotReload)
+    {
+        _hgr = PluginHooks.Get();
+                
+        hgrCount = new int[3][];
+        for (int i = 0; i < 3; i++)
+            hgrCount[i] = new int[65];
+
+        if (_hgr == null) return;
+        _hgr.AddHook(HGRHook, 75);
+    }
+
+    public override void Unload(bool hotReload)
+    {        
+        _hgr.RemHook(HGRHook);
+    }
+
+
+    private int[][] hgrCount; // 0 - Hooks, 1 - Grabs, 2 - Ropes
+
+
+    private void HGRHook(PlayerHGR info)
+    {
+        if (info.State() == HGRState.Disabled)
+        {
+            int i = 0;
+            switch (info.Mode())
+            {
+                case HGRMode.Hook: i = 0; break;
+                case HGRMode.Grab: i = 1; break;
+                case HGRMode.Rope: i = 2; break;
+                default: return;
+            }
+
+            if (hgrCount[i][info.Player().Slot] == -1)
+                info.Enable();
+            else
+                if (hgrCount[i][info.Player().Slot] > 0)
+            {
+                hgrCount[i][info.Player().Slot]--;
+                info.Enable();
+
+                if (hgrCount[i][info.Player().Slot] == 0)
+                    info.Player().PrintToChat(Localizer["admin_hgr.expired"]);
+                else
+                    info.Player().PrintToChat(String.Format(Localizer["admin_hgr.use_count"], hgrCount[i][info.Player().Slot]));
+            }
+        }
+    }
+
     [GameEventHandler]
     public HookResult OnRoundStart(EventRoundStart @event, GameEventInfo info)
     {
-        for (int i = 0; i < 65; i++)
-            hooksCount[i] = 0;
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 65; j++)
+                hgrCount[i][j] = 0;
         return HookResult.Continue;
     }
 
-    [GameEventHandler]
-    public HookResult OnFreezeEnd(EventRoundFreezeEnd @event, GameEventInfo info)
-    {
-        for (int i = 0; i < 65; i++)
-        {
-            var player = Utilities.GetPlayerFromSlot(i);
-
-            if (IsValidPlayer(player)) // TODO: добавить подтягивание из конфига
-            {                
-                var limit = AdminHookGet(player);
-                if(limit != 0)
-                    hooksCount[i] = limit;
-            }
-        }
-        return HookResult.Continue;
-    }
 
     [GameEventHandler]
     public HookResult OnRoundEnd(EventRoundEnd @event, GameEventInfo info)
     {
-        for (int i = 0; i < 65; i++)
-        {
-            var player = Utilities.GetPlayerFromSlot(i);
-
-            if (IsValidPlayer(player)) // TODO: добавить подтягивание из конфига
-            {
-                if (hooksCount[i] == -1) continue;
-                var limit = AdminHookGet(player);
-                if (limit > 0)
-                    hooksCount[i] += limit;
-                else if (limit == -1)
-                    hooksCount[i] = -1;
-            }
-        }
+        OnRoundEvent(true);
         return HookResult.Continue;
     }
 
-    private bool IsValidPlayer(CCSPlayerController player)
+
+    [GameEventHandler]
+    public HookResult OnFreezeEnd(EventRoundFreezeEnd @event, GameEventInfo info)
     {
-        return player != null && player.IsValid && player.Connected == PlayerConnectedState.PlayerConnected && !player.IsBot;
+        OnRoundEvent(false);
+        return HookResult.Continue;
     }
 
-
-    public int AdminHookGet(CCSPlayerController player, bool endRound = false)
+    private void OnRoundEvent(bool endRound)
     {
+        foreach (var player in Utilities.GetPlayers())
+        {
+            var slot = player.Slot;
+            (int hooks, int grabs, int ropes) = GetValues(player);
+
+            AddHGRValues(slot, 0, hooks);
+            AddHGRValues(slot, 1, grabs);
+            AddHGRValues(slot, 2, ropes);
+          
+        }
+    }
+
+    private (int, int, int) GetValues(CCSPlayerController player, bool endRound = false)
+    {
+        var values = new int[3];
+
         foreach(var limit in Config.Limits)
         {
-            if(AdminManager.PlayerHasPermissions(player, limit.Flag) && limit.OnlyEndRound == endRound)
-                return limit.Value;
+            if (AdminManager.PlayerHasPermissions(player, limit.Flag) && limit.OnlyEndRound == endRound)
+            {
+                if (limit.HooksValue == -1)
+                    values[0] = -1;
+                else if(limit.HooksValue > values[0])
+                    values[0] = limit.HooksValue;
+
+                if (limit.GrabsValue == -1)
+                    values[1] = -1;
+                else if (limit.GrabsValue > values[1])
+                    values[1] = limit.GrabsValue;
+
+                if (limit.RopesValue == -1)
+                    values[2] = -1;
+                else if (limit.RopesValue > values[2])
+                    values[2] = limit.RopesValue;
+            }
         }
 
-        return 0;
+        return (values[0], values[1], values[2]);
     }
+
+    private void AddHGRValues(int slot, int index, int value)
+    {
+        if(value == -1)
+            hgrCount[index][slot] = -1;
+        else if (hgrCount[index][slot] != -1)
+            hgrCount[index][slot] += value;
+    }
+
 }
